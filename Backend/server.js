@@ -1,46 +1,45 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
 const nodemailer = require("nodemailer");
 const jwt = require("jsonwebtoken");
-const JWT_SECRET = "satyasri";
+require("dotenv").config();
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
+const DB_URL = process.env.REACT_APP_DB_URL;
+const PASSWORD = process.env.REACT_APP_PASSWORD;
+const EMAIL = process.env.REACT_APP_EMAIL;
+const JWT_SECRET = process.env.REACT_APP_JWT_SECRET;
 
-
-// Simulated OTP storage (In production, use a database)
 const otpStorage = {};
 
 // Create a transporter object using the default SMTP transport
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "komuravellimalathi@gmail.com", // Replace with your Gmail email
-    pass: "kpsfkbyozjsrcrwz", // Replace with your Gmail password
+    user: EMAIL,
+    pass: PASSWORD,
   },
 });
-
 
 const PORT = 5012;
 
 // MongoDB connection
-mongoose.connect('mongodb+srv://satya:satya@cluster0.a5yqzjv.mongodb.net/?retryWrites=true&w=majority', {
+mongoose.connect( DB_URL, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
 
 const db = mongoose.connection;
 
-db.on('error', console.error.bind(console, 'connection error:'));
-db.once('open', () => {
-  console.log('Connected to MongoDB');
+db.on("error", console.error.bind(console, "connection error:"));
+db.once("open", () => {
+  console.log("Connected to MongoDB");
 });
-
-
 
 // API Routes
 app.post("/api/bookings", async (req, res) => {
@@ -68,7 +67,6 @@ app.post("/api/bookings", async (req, res) => {
   }
 });
 
-
 app.get("/api/allbookings", async (req, res) => {
   try {
     const cursor = await db.collection("bookings").find({});
@@ -82,14 +80,12 @@ app.get("/api/allbookings", async (req, res) => {
       bookings[booking.date].push(booking.updatedSlot);
     });
 
-
     res.json(bookings);
   } catch (error) {
     console.error("Error fetching bookings:", error);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
 
 app.post("/api/send-otp", async (req, res) => {
   const { email } = req.body;
@@ -114,36 +110,32 @@ app.post("/api/send-otp", async (req, res) => {
 });
 
 // API Endpoint to verify OTP
-app.post('/api/verify-otp', (req, res) => {
+app.post("/api/verify-otp", (req, res) => {
   const { email, otp } = req.body;
   if (otpStorage[email] === Number(otp)) {
+    const data = {
+      user: {
+        email: email,
+      },
+    };
 
-          const data = {
-            user: {
-              email : email,
-            },
-          };
-
-          //signing the jwt key using the JWT SECRET KEY and the data which is ntg but the id
-
-          const authToken = jwt.sign(data, JWT_SECRET);
-          res.json({ verified: true, authToken });
+    const authToken = jwt.sign(data, JWT_SECRET);
+    res.json({ verified: true, authToken, email });
 
     res.status(200).send({ verified: true });
-
   } else {
     res.status(400).send({ verified: false });
   }
 });
 
-app.post('/api/book', async (req, res) => {
+app.post("/api/book", async (req, res) => {
   const { date, updatedSlot, authToken } = req.body;
-  
-  const {user} = jwt.verify(authToken, JWT_SECRET);
-  
-  await db.collection('bookings').insertOne({ user, date, updatedSlot });
 
-  res.json({ message: 'Booking successful' });
+  const { user } = jwt.verify(authToken, JWT_SECRET);
+
+  await db.collection("bookings").insertOne({ user, date, updatedSlot });
+
+  res.json({ message: "Booking successful" });
 });
 
 app.delete("/api/cancel/:date/:time", async (req, res) => {
@@ -174,10 +166,6 @@ app.delete("/api/cancel/:date/:time", async (req, res) => {
       .json({ message: "Internal Server Error", error: error.toString() });
   }
 });
-
-
-
-
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
