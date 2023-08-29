@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
 type TimeSlot = {
   time: string;
@@ -27,35 +28,80 @@ const AppointmentScheduler: React.FC = () => {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [bookedSlots, setBookedSlots] = useState<BookedSlots>({});
   const [allBookings, setAllBookings] = useState<{ [date: string]: TimeSlot[] }>({});
+  const authToken = localStorage.getItem("authToken");
+  const navigate = useNavigate();
 
   const helper = () => {
-      axios.get('http://localhost:5012/api/bookings')
-    .then(response => {
+    axios
+      .post("http://localhost:5012/api/bookings", { authToken })
+      .then((response) => {
+        const fetchedBookedSlots: BookedSlots = {};
+        Object.keys(response.data).forEach((date) => {
+          // Initialize with all slots as unbooked
+          fetchedBookedSlots[date] = generateTimeSlots();
+
+          // Update the specific slots that are booked
+          const bookedSlots = response.data[date];
+          fetchedBookedSlots[date] = fetchedBookedSlots[date].map((slot) => {
+            const matchingBookedSlot = bookedSlots.find(
+              (bookedSlot: any) => bookedSlot.time === slot.time
+            );
+            if (matchingBookedSlot) {
+              return { ...slot, isBooked: matchingBookedSlot.isBooked };
+            }
+            return slot;
+          });
+        });
+        setAllBookings(fetchedBookedSlots);
+      })
+      .catch((error) => {
+        console.error("Error fetching data:", error);
+      });
+  };
+
+
+const assist = () => {
+  axios
+    .get("http://localhost:5012/api/allbookings")
+    .then((response) => {
       const fetchedBookedSlots: BookedSlots = {};
-      Object.keys(response.data).forEach(date => {
+      Object.keys(response.data).forEach((date) => {
         // Initialize with all slots as unbooked
         fetchedBookedSlots[date] = generateTimeSlots();
 
-        // Update the specific slot that is booked
-        const bookedSlot = response.data[date];
-        fetchedBookedSlots[date] = fetchedBookedSlots[date].map(slot => {
-          if (slot.time === bookedSlot.time) {
-            return { ...slot, isBooked: bookedSlot.isBooked };
+        // Update the specific slots that are booked
+        const bookedSlots = response.data[date];
+        fetchedBookedSlots[date] = fetchedBookedSlots[date].map((slot) => {
+          const matchingBookedSlot = bookedSlots.find(
+            (bookedSlot:any) => bookedSlot.time === slot.time
+          );
+          if (matchingBookedSlot) {
+            return { ...slot, isBooked: matchingBookedSlot.isBooked };
           }
           return slot;
         });
       });
       setBookedSlots(fetchedBookedSlots);
-      setAllBookings(fetchedBookedSlots);
     })
-    .catch(error => {
-      console.error('Error fetching data:', error);
+    .catch((error) => {
+      console.error("Error fetching data:", error);
     });
-  }
+};
+
 
   useEffect(() => {
+    if (!localStorage.getItem("authToken"))
+    {
+      navigate('/');
+    }
     helper();
+    assist();
   }, [selectedDate]);
+
+    const handleLogout = () => {
+      localStorage.removeItem("authToken"); // Clear the auth token
+      navigate("/"); // Navigate to the '/' route
+    };
   
   const isPastTimeSlot = (date: string, time: string) => {
   const currentTime = new Date();
@@ -67,10 +113,11 @@ const AppointmentScheduler: React.FC = () => {
 
 const bookSlot = (slot: TimeSlot, date: string) => {
   const updatedSlot: TimeSlot = { ...slot, isBooked: true };
-  axios.post('http://localhost:5012/api/book', { date, updatedSlot })
-    .then(response => {
+  axios
+    .post("http://localhost:5012/api/book", { date, updatedSlot, authToken })
+    .then((response) => {
       const existingSlots = bookedSlots[date] || generateTimeSlots();
-      const updatedSlots = existingSlots.map(s => {
+      const updatedSlots = existingSlots.map((s) => {
         if (s.time === updatedSlot.time) {
           return updatedSlot;
         }
@@ -82,15 +129,24 @@ const bookSlot = (slot: TimeSlot, date: string) => {
       const updatedAllBookings = [...existingAllBookings, updatedSlot];
       setAllBookings({ ...allBookings, [date]: updatedAllBookings });
     })
-    .catch(error => {
-      console.error('Error booking slot:', error);
+    .catch((error) => {
+      console.error("Error booking slot:", error);
     });
+  helper();
 };
 
+  
+  useEffect(() => {
+    const interval = setInterval(() => {
+      helper();
+      assist();
+    }, 100);
+    return () => clearInterval(interval);
+  }, []);
 
 
 const cancelBooking = (slot: TimeSlot, date: string) => {
-  axios.put(`http://localhost:5012/api/cancel/${date}/${slot.time}`)
+  axios.delete(`http://localhost:5012/api/cancel/${date}/${slot.time}`)
     .then(response => {
       // Update the isBooked flag to false for the cancelled slot
       const updatedSlots = bookedSlots[date]?.map(s => {
@@ -123,6 +179,12 @@ const cancelBooking = (slot: TimeSlot, date: string) => {
   return (
     <div className="flex flex-col items-center justify-center h-screen">
       <div className="flex flex-col items-center mt-2 p-2 pb-8 max-w-md mx-auto bg-gray-200 text-black">
+        <button
+          onClick={handleLogout}
+          className="absolute top-4 right-4 bg-red-500 text-white px-4 py-2 rounded"
+        >
+          Logout
+        </button>
         <h1 className="text-xl font-bold mb-2">Appointment Scheduler</h1>
         <div className="mb-4">
           <Calendar
@@ -157,7 +219,11 @@ const cancelBooking = (slot: TimeSlot, date: string) => {
                         disabled
                         className="bg-red-500 text-white px-1 py-0.5 rounded"
                       >
-                        Booked
+                        {isPastTimeSlot(dateKey, slot.time) ? (
+                          <span>Expired</span>
+                        ) : (
+                          <span>Booked</span>
+                        )}
                       </button>
                     ) : isPastTimeSlot(dateKey, slot.time) ? (
                       <button
@@ -220,21 +286,24 @@ const cancelBooking = (slot: TimeSlot, date: string) => {
               {Object.keys(allBookings).map((date) =>
                 allBookings[date]
                   .filter((slot) => slot.isBooked)
-                  .map((slot, index) => (
-                    !isPastTimeSlot(date, slot.time) && <div
-                      key={`${date}-${index}`}
-                      className="p-2 border rounded mr-2 mb-2"
-                    >
-                      <h3>{date}</h3>
-                      <p>Time: {slot.time}</p>
-                      <button
-                        className="bg-red-500 text-white px-2 py-1 rounded mt-1 block"
-                        onClick={() => cancelBooking(slot, date)}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ))
+                  .map(
+                    (slot, index) =>
+                      !isPastTimeSlot(date, slot.time) && (
+                        <div
+                          key={`${date}-${index}`}
+                          className="p-2 border rounded mr-2 mb-2"
+                        >
+                          <h3>{date}</h3>
+                          <p>Time: {slot.time}</p>
+                          <button
+                            className="bg-red-500 text-white px-2 py-1 rounded mt-1 block"
+                            onClick={() => cancelBooking(slot, date)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      )
+                  )
               )}
             </div>
           </div>

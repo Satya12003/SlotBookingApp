@@ -1,11 +1,29 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const nodemailer = require("nodemailer");
+const jwt = require("jsonwebtoken");
+const JWT_SECRET = "satyasri";
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+
+
+// Simulated OTP storage (In production, use a database)
+const otpStorage = {};
+
+// Create a transporter object using the default SMTP transport
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: "komuravellimalathi@gmail.com", // Replace with your Gmail email
+    pass: "kpsfkbyozjsrcrwz", // Replace with your Gmail password
+  },
+});
+
 
 const PORT = 5012;
 
@@ -22,62 +40,141 @@ db.once('open', () => {
   console.log('Connected to MongoDB');
 });
 
-// Schema and Model
-const appointmentSchema = new mongoose.Schema({
-  date: String,
-  time: String,
-  isBooked: Boolean,
-});
 
-const Appointment = mongoose.model('Appointment', appointmentSchema);
 
 // API Routes
-app.get('/api/bookings', async (req, res) => {
+app.post("/api/bookings", async (req, res) => {
   try {
-    const cursor = await db.collection('bookings').find({});
+    const { authToken } = req.body;
+    const { user } = jwt.verify(authToken, JWT_SECRET);
+
+    const cursor = await db
+      .collection("bookings")
+      .find({ "user.email": user.email });
     const bookingsArray = await cursor.toArray();
     const bookings = {};
+
     bookingsArray.forEach((booking) => {
-      bookings[booking.date] = booking.updatedSlot;
+      if (!bookings[booking.date]) {
+        bookings[booking.date] = [];
+      }
+      bookings[booking.date].push(booking.updatedSlot);
     });
-      
-   //   console.log(bookings);
 
     res.json(bookings);
   } catch (error) {
-    console.error('Error fetching bookings:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error fetching bookings:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+
+app.get("/api/allbookings", async (req, res) => {
+  try {
+    const cursor = await db.collection("bookings").find({});
+    const bookingsArray = await cursor.toArray();
+    const bookings = {};
+
+    bookingsArray.forEach((booking) => {
+      if (!bookings[booking.date]) {
+        bookings[booking.date] = [];
+      }
+      bookings[booking.date].push(booking.updatedSlot);
+    });
+
+
+    res.json(bookings);
+  } catch (error) {
+    console.error("Error fetching bookings:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+
+app.post("/api/send-otp", async (req, res) => {
+  const { email } = req.body;
+  const otp = Math.floor(1000 + Math.random() * 9000); // Generate a 4-digit OTP
+  otpStorage[email] = otp;
+
+  // Send OTP via email
+  const mailOptions = {
+    from: "komuravellimalathi@gmail.com", // Replace with your Gmail email
+    to: email,
+    subject: "Your OTP Code",
+    text: `Your OTP code is ${otp}`,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    res.status(200).send({ success: true });
+  } catch (error) {
+    console.error("Error sending OTP:", error);
+    res.status(500).send({ success: false });
+  }
+});
+
+// API Endpoint to verify OTP
+app.post('/api/verify-otp', (req, res) => {
+  const { email, otp } = req.body;
+  if (otpStorage[email] === Number(otp)) {
+
+          const data = {
+            user: {
+              email : email,
+            },
+          };
+
+          //signing the jwt key using the JWT SECRET KEY and the data which is ntg but the id
+
+          const authToken = jwt.sign(data, JWT_SECRET);
+          res.json({ verified: true, authToken });
+
+    res.status(200).send({ verified: true });
+
+  } else {
+    res.status(400).send({ verified: false });
   }
 });
 
 app.post('/api/book', async (req, res) => {
-    const { date, updatedSlot } = req.body;
-  await db.collection('bookings').insertOne({ date, updatedSlot });
+  const { date, updatedSlot, authToken } = req.body;
+  
+  const {user} = jwt.verify(authToken, JWT_SECRET);
+  
+  await db.collection('bookings').insertOne({ user, date, updatedSlot });
+
   res.json({ message: 'Booking successful' });
 });
 
-app.put('/api/cancel/:date/:time', async (req, res) => {
+app.delete("/api/cancel/:date/:time", async (req, res) => {
   try {
-    console.log("Received PUT request for date:", req.params.date, "and time:", req.params.time);  // Debugging line
+    // console.log(
+    //   "Received PUT request for date:",
+    //   req.params.date,
+    //   "and time:",
+    //   req.params.time
+    // ); // Debugging line
 
     const { date, time } = req.params;
-    const filter = { "date": date, "updatedSlot.time": time };
-    const update = { $set: { "updatedSlot.isBooked": false } };
+    const filter = { date: date, "updatedSlot.time": time };
 
-    const result = await db.collection('bookings').updateOne(filter, update);
+    const result = await db.collection("bookings").deleteOne(filter);
 
-    console.log("Update result:", result);  // Debugging line
+    // console.log("Delete result:", result); // Debugging line
 
-    if (result.matchedCount === 1) {
-      res.status(200).json({ message: 'Booking cancelled successfully' });
+    if (result.deletedCount === 1) {
+      res.status(200).json({ message: "Booking cancelled successfully" });
     } else {
-      res.status(404).json({ message: 'Booking not found' });
+      res.status(404).json({ message: "Booking not found" });
     }
   } catch (error) {
-    console.error('Error canceling booking:', error);
-    res.status(500).json({ message: 'Internal Server Error', error: error.toString() });
+    console.error("Error canceling booking:", error);
+    res
+      .status(500)
+      .json({ message: "Internal Server Error", error: error.toString() });
   }
 });
+
 
 
 
